@@ -35,7 +35,7 @@ A lightweight **Windows application** that converts multiple **RTMP (Real-Time M
    - `mediamtx.exe` is in the `mediamtx/` subfolder  
 3. Run `RTMP_to_RTSP_Converter.exe`  
 4. Your browser will automatically open to:  
-   👉 [http://127.0.0.1:5000](http://127.0.0.1:5000)
+   👉 [http://localhost:5000](http://localhost:5000)
 
 ---
 
@@ -52,7 +52,7 @@ A lightweight **Windows application** that converts multiple **RTMP (Real-Time M
    ```bash
    python app.py
    ```
-6. Open [http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser  
+6. Open [http://localhost:5000](http://localhost:5000) in your browser  
 
 ---
 
@@ -72,7 +72,7 @@ Click **“Start Conversion & Serve”**.
 Each active stream appears under **Active RTSP Streams** with:
 - 🟢 / 🟡 / 🔴 **Status Indicator**  
 - Source **RTMP URL**  
-- Output **RTSP URL** (e.g., `rtsp://127.0.0.1:8554/stream-id`)  
+- Output **RTSP URL** (e.g., `rtsp://localhost:8554/stream-id`)  
 - **Copy** and **Stop** buttons  
 
 ### Use RTSP Streams
@@ -112,7 +112,7 @@ Click **Stop** per stream or **Stop All** to end all sessions.
 
 ### FFmpeg Command Pattern
 ```bash
-ffmpeg -i rtmp://source/stream -c:v copy -c:a copy -f rtsp rtsp://127.0.0.1:8554/stream-id
+ffmpeg -i rtmp://source/stream -c:v copy -c:a copy -f rtsp rtsp://localhost:8554/stream-id
 ```
 
 ---
@@ -170,7 +170,7 @@ See [`BUILD_INSTRUCTIONS.md`](BUILD_INSTRUCTIONS.md) for details.
 - Or modify ports in `app.py` before building  
 
 ### Browser Doesn’t Open
-- Manually go to [http://127.0.0.1:5000](http://127.0.0.1:5000)  
+- Manually go to [http://localhost:5000](http://localhost:5000)  
 - Check if another service occupies port 5000  
 
 ---
