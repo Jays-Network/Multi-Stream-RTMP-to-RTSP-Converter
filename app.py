@@ -18,12 +18,12 @@ streams = {}
 mediamtx_process = None
 
 RTSP_SERVER_PORT = 8554
-RTSP_SERVER_HOST = "127.0.0.1"
+RTSP_SERVER_HOST = "localhost"
 
 
 def get_ffmpeg_path():
     if getattr(sys, 'frozen', False):
-        base_path = getattr(sys, '_MEIPASS', '')
+        base_path = os.path.dirname(sys.executable)
         ffmpeg_path = os.path.join(base_path, 'ffmpeg', 'ffmpeg.exe')
         if os.path.exists(ffmpeg_path):
             return ffmpeg_path
@@ -44,7 +44,7 @@ def get_ffmpeg_path():
 
 def get_mediamtx_path():
     if getattr(sys, 'frozen', False):
-        base_path = getattr(sys, '_MEIPASS', '')
+        base_path = os.path.dirname(sys.executable)
         mediamtx_path = os.path.join(base_path, 'mediamtx', 'mediamtx.exe')
         if os.path.exists(mediamtx_path):
             return mediamtx_path
@@ -127,31 +127,53 @@ def stop_rtsp_server():
 
 
 def monitor_process(stream_id, process):
+    # Change: Read stderr output line by line as it runs for better logging/error detection
+    stderr_lines = iter(process.stderr.readline, b'')
+    startup_failed = False
+    
     try:
-        while True:
+        # Give FFmpeg a few seconds to connect
+        startup_timeout = 5
+        start_time = time.time()
+        
+        # This loop reads the FFmpeg stderr output as it's generated
+        for line in stderr_lines:
             if stream_id not in streams:
                 break
             
-            if process.poll() is not None:
-                stderr_output = process.stderr.read() if process.stderr else ""
-                
-                if streams[stream_id]['status'] == 'active':
-                    streams[stream_id]['status'] = 'stopped'
-                    streams[stream_id]['error'] = f"Process terminated unexpectedly. Exit code: {process.returncode}"
-                    
-                    log_message = f"Stream {stream_id} stopped unexpectedly. Exit code: {process.returncode}"
-                    if stderr_output:
-                        log_message += f"\nFFmpeg output: {stderr_output[:500]}"
-                    
-                    socketio.emit('log', {'message': log_message, 'type': 'error'})
-                    socketio.emit('stream_update', {
-                        'stream_id': stream_id,
-                        'status': 'stopped',
-                        'error': streams[stream_id]['error']
-                    })
-                break
+            log_message = line.decode('utf-8', errors='ignore').strip()
             
-            time.sleep(2)
+            # --- Key Logic: Error Detection ---
+            # Check for common fatal errors indicating connection/file issues
+            if "could not open" in log_message.lower() or "no such file or directory" in log_message.lower():
+                startup_failed = True
+                streams[stream_id]['error'] = f"Fatal FFmpeg startup error: {log_message[:100]}"
+                streams[stream_id]['status'] = 'stopped'
+                
+                socketio.emit('log', {'message': streams[stream_id]['error'], 'type': 'error'})
+                socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'stopped', 'error': streams[stream_id]['error']})
+                break
+            # --- End Key Logic ---
+
+            if time.time() - start_time > startup_timeout and streams[stream_id]['status'] == 'starting':
+                # If we passed the startup phase and process is still running, mark as active
+                streams[stream_id]['status'] = 'active'
+                socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'active', 'error': ''})
+                socketio.emit('log', {'message': f"Stream {stream_id} is now active.", 'type': 'info'})
+
+            # Check if process terminated during line reading
+            if process.poll() is not None:
+                break
+        
+        # After loop (either broke or process terminated/stderr closed)
+        if process.poll() is not None and streams[stream_id]['status'] != 'stopped' and not startup_failed:
+            # Process terminated unexpectedly *after* successful startup
+            streams[stream_id]['status'] = 'stopped'
+            streams[stream_id]['error'] = f"Process terminated unexpectedly. Exit code: {process.returncode}"
+            
+            socketio.emit('log', {'message': f"Stream {stream_id} stopped unexpectedly. Exit code: {process.returncode}", 'type': 'error'})
+            socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'stopped', 'error': streams[stream_id]['error']})
+            
     except Exception as e:
         print(f"Monitor thread error for {stream_id}: {str(e)}")
 
@@ -256,11 +278,19 @@ def start_streams():
         
         ffmpeg_cmd = [
             ffmpeg_path,
+            # Added input options for live streaming stability
+            '-analyzeduration', '1000000', # Analyze 1 second of data
+            '-probesize', '1000000',       # Probe 1MB of data
             '-i', rtmp_url,
+            # Force a keyframe/GOP every 2 seconds for better stream stability
+            '-g', '60', # Assuming 30fps stream
+            '-force_key_frames', 'expr:gte(t,n_forced*2)',
             '-c:v', 'copy',
             '-c:a', 'copy',
             '-f', 'rtsp',
             '-rtsp_transport', 'tcp',
+            # MediaMTX is known to work best with its own custom path
+            # Note: You already use rtsp://localhost:8554/{stream_id}, which is correct.
             rtsp_url
         ]
         
@@ -274,7 +304,6 @@ def start_streams():
             )
             
             streams[stream_id]['process'] = process
-            streams[stream_id]['status'] = 'active'
             
             monitor_thread = threading.Thread(
                 target=monitor_process,
@@ -287,11 +316,11 @@ def start_streams():
                 'id': stream_id,
                 'rtmp_url': rtmp_url,
                 'rtsp_url': rtsp_url,
-                'status': 'active'
+                'status': 'starting'
             })
             
             socketio.emit('log', {
-                'message': f'Started stream {stream_id}: {rtmp_url} -> {rtsp_url}',
+                'message': f'Attempting to start stream {stream_id}: {rtmp_url} -> {rtsp_url}',
                 'type': 'info'
             })
             
@@ -299,7 +328,7 @@ def start_streams():
                 'stream_id': stream_id,
                 'rtmp_url': rtmp_url,
                 'rtsp_url': rtsp_url,
-                'status': 'active',
+                'status': 'starting',
                 'error': ''
             })
             
@@ -435,7 +464,7 @@ def setup_windows_startup():
 
 def open_browser():
     time.sleep(1.5)
-    webbrowser.open('http://127.0.0.1:5000')
+    webbrowser.open('http://localhost:5000')
 
 
 def cleanup():
