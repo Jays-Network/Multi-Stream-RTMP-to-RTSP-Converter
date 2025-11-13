@@ -1,132 +1,208 @@
-Multi-Stream RTMP to RTSP Converter
-A lightweight Windows application that converts multiple RTMP (Real-Time Messaging Protocol) streams to RTSP (Real-Time Streaming Protocol) streams in real-time using FFmpeg.
+# 🎬 Multi-Stream RTMP to RTSP Converter
 
-Features
-Multi-Stream Support: Convert multiple RTMP streams simultaneously
-Real-Time Monitoring: Live status updates for each stream
-Modern Web UI: Clean, dark-themed responsive interface
-Process Management: Individual control over each stream conversion
-Auto-Startup: Automatically launches on Windows login
-FFmpeg Integration: Leverages FFmpeg for reliable stream conversion
-Error Logging: Comprehensive logging console for troubleshooting
-System Requirements
-Windows 10/11
-FFmpeg (bundled with executable)
-MediaMTX RTSP server (bundled with executable)
-Network access to RTMP sources
-Quick Start
-For End Users (Executable)
-Download the RTMP_to_RTSP_Converter folder
-Ensure ffmpeg.exe is in the ffmpeg/ subfolder
-Ensure mediamtx.exe is in the mediamtx/ subfolder
-Run RTMP_to_RTSP_Converter.exe
-Your browser will automatically open to http://127.0.0.1:5000
-For Developers (Source Code)
-Install Python 3.11+
-Download MediaMTX from https://github.com/bluenviron/mediamtx/releases
-Extract and place mediamtx.exe in a mediamtx folder
-Install dependencies:
-pip install flask flask-socketio psutil pyinstaller
+A lightweight **Windows application** that converts multiple **RTMP (Real-Time Messaging Protocol)** streams to **RTSP (Real-Time Streaming Protocol)** streams in real-time using **FFmpeg**.
 
-Run the application:
-python app.py
+---
 
-Open http://127.0.0.1:5000 in your browser
-Usage
-Enter RTMP URLs: In the input area, enter one RTMP URL per line
+## 🚀 Features
 
+- **Multi-Stream Support:** Convert multiple RTMP streams simultaneously  
+- **Real-Time Monitoring:** Live status updates for each stream  
+- **Modern Web UI:** Clean, dark-themed, responsive interface  
+- **Process Management:** Start/stop control per stream  
+- **Auto-Startup:** Automatically launches on Windows login  
+- **FFmpeg Integration:** Uses FFmpeg for reliable stream conversion  
+- **Error Logging:** Built-in console for detailed troubleshooting  
+
+---
+
+## 🖥️ System Requirements
+
+- Windows 10 / 11  
+- FFmpeg (bundled with executable)  
+- MediaMTX RTSP server (bundled with executable)  
+- Network access to RTMP sources  
+
+---
+
+## ⚡ Quick Start
+
+### For End Users (Executable)
+
+1. **Download** the `RTMP_to_RTSP_Converter` folder  
+2. Ensure:
+   - `ffmpeg.exe` is in the `ffmpeg/` subfolder  
+   - `mediamtx.exe` is in the `mediamtx/` subfolder  
+3. Run `RTMP_to_RTSP_Converter.exe`  
+4. Your browser will automatically open to:  
+   👉 [http://127.0.0.1:5000](http://127.0.0.1:5000)
+
+---
+
+### For Developers (Source Code)
+
+1. Install **Python 3.11+**  
+2. Download **MediaMTX** from [bluenviron/mediamtx](https://github.com/bluenviron/mediamtx/releases)  
+3. Extract and place `mediamtx.exe` in a `mediamtx/` folder  
+4. Install dependencies:
+   ```bash
+   pip install flask flask-socketio psutil pyinstaller
+   ```
+5. Run the application:
+   ```bash
+   python app.py
+   ```
+6. Open [http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser  
+
+---
+
+## 🎛️ Usage
+
+### Enter RTMP URLs
+In the input area, enter one RTMP URL per line:
+```
 rtmp://source.example.com/live/stream1
 rtmp://source.example.com/live/stream2
+```
 
-Start Conversion: Click "Start Conversion & Serve"
+### Start Conversion
+Click **“Start Conversion & Serve”**.
 
-Monitor Streams: Each stream will appear in the "Active RTSP Streams" section with:
+### Monitor Streams
+Each active stream appears under **Active RTSP Streams** with:
+- 🟢 / 🟡 / 🔴 **Status Indicator**  
+- Source **RTMP URL**  
+- Output **RTSP URL** (e.g., `rtsp://127.0.0.1:8554/stream-id`)  
+- **Copy** and **Stop** buttons  
 
-Status indicator (🟢 Active, 🟡 Starting, 🔴 Stopped)
-Source RTMP URL
-Output RTSP URL (e.g., rtsp://127.0.0.1:8554/stream-id)
-Copy and Stop buttons
-Use RTSP Streams: Copy the RTSP URLs and use them in:
+### Use RTSP Streams
+RTSP URLs can be opened in:
+- **VLC Media Player**
+- **OBS Studio**
+- **Any RTSP-compatible software**
 
-VLC Media Player
-OBS Studio
-Any RTSP-compatible player/software
-Stop Streams: Click individual "Stop" buttons or "Stop All"
+### Stop Streams
+Click **Stop** per stream or **Stop All** to end all sessions.
 
-Architecture
-Technology Stack
-Backend: Python + Flask + Flask-SocketIO
-Frontend: HTML5 + CSS3 + JavaScript + Bootstrap 5
-Streaming Engine: FFmpeg
-RTSP Server: MediaMTX (formerly rtsp-simple-server)
-Process Management: psutil
-Packaging: PyInstaller
-How It Works
-Application starts MediaMTX RTSP server on port 8554
-User provides RTMP stream URLs
-Application spawns separate FFmpeg process for each stream
-FFmpeg pulls from RTMP source and pushes to MediaMTX RTSP server
-MediaMTX serves RTSP streams to clients on localhost:8554
-WebSocket provides real-time status updates
-Process monitoring ensures failed streams are detected
-FFmpeg Command Pattern
+---
+
+## 🧩 Architecture
+
+### Technology Stack
+| Component | Technology |
+|------------|-------------|
+| Backend | Python + Flask + Flask-SocketIO |
+| Frontend | HTML5 + CSS3 + JavaScript + Bootstrap 5 |
+| Streaming Engine | FFmpeg |
+| RTSP Server | MediaMTX (formerly *rtsp-simple-server*) |
+| Process Management | psutil |
+| Packaging | PyInstaller |
+
+---
+
+## ⚙️ How It Works
+
+1. The app starts **MediaMTX** RTSP server on port **8554**  
+2. User provides RTMP stream URLs  
+3. App spawns a separate **FFmpeg** process for each stream  
+4. FFmpeg pulls from RTMP and pushes to MediaMTX  
+5. MediaMTX serves RTSP streams to clients  
+6. WebSocket provides real-time status updates  
+7. Process monitoring detects failed streams  
+
+### FFmpeg Command Pattern
+```bash
 ffmpeg -i rtmp://source/stream -c:v copy -c:a copy -f rtsp rtsp://127.0.0.1:8554/stream-id
+```
 
-Configuration
-Ports
-Web Interface: 5000 (configurable in app.py)
-RTSP Server: 8554 (configurable in app.py)
-Windows Startup
-The application automatically registers itself to run on Windows startup by adding an entry to:
+---
 
+## 🔧 Configuration
+
+### Ports
+| Service | Default | Configurable In |
+|----------|----------|----------------|
+| Web Interface | 5000 | `app.py` |
+| RTSP Server | 8554 | `app.py` |
+
+### Windows Auto Startup
+The app adds itself to:
+```
 HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
+```
 
-Building from Source
-See BUILD_INSTRUCTIONS.md for detailed build instructions.
+---
 
-Summary:
+## 🏗️ Building from Source
 
-Download FFmpeg for Windows
-Install Python dependencies
-Run pyinstaller build_windows.spec
-Copy ffmpeg.exe to distribution folder
-Distribute the entire folder
-Troubleshooting
-FFmpeg Not Found
-Ensure ffmpeg.exe is in the ffmpeg/ folder next to the executable
-For development, ensure FFmpeg is in your system PATH
-MediaMTX Not Found / Streams Won't Start
-Ensure mediamtx.exe is in the mediamtx/ folder next to the executable
-Download from https://github.com/bluenviron/mediamtx/releases
-MediaMTX is required for the RTSP server - streams will fail without it
-Stream Won't Start
-Verify the RTMP URL is valid and accessible
-Check firewall settings
-Review the Error/Log Console for FFmpeg errors
-Port Already in Use
-Close applications using port 5000 or 8554
-Or modify the ports in app.py before building
-Browser Doesn't Open
-Manually navigate to http://127.0.0.1:5000
-Check if another application is using port 5000
-Project Structure
+See [`BUILD_INSTRUCTIONS.md`](BUILD_INSTRUCTIONS.md) for details.
+
+**Summary:**
+1. Download FFmpeg for Windows  
+2. Install Python dependencies  
+3. Run:
+   ```bash
+   pyinstaller build_windows.spec
+   ```
+4. Copy `ffmpeg.exe` to the distribution folder  
+5. Distribute the full folder  
+
+---
+
+## 🩺 Troubleshooting
+
+### FFmpeg Not Found
+- Ensure `ffmpeg.exe` is in the `ffmpeg/` folder next to the executable  
+- For development, confirm FFmpeg is in your system `PATH`
+
+### MediaMTX Not Found / Streams Won’t Start
+- Ensure `mediamtx.exe` is in the `mediamtx/` folder  
+- Download from [bluenviron/mediamtx](https://github.com/bluenviron/mediamtx/releases)  
+- **MediaMTX** is required — streams won’t start without it  
+
+### Stream Won’t Start
+- Verify RTMP URL validity and accessibility  
+- Check firewall settings  
+- Review the **Error/Log Console** for FFmpeg messages  
+
+### Port Already in Use
+- Close apps using ports **5000** or **8554**  
+- Or modify ports in `app.py` before building  
+
+### Browser Doesn’t Open
+- Manually go to [http://127.0.0.1:5000](http://127.0.0.1:5000)  
+- Check if another service occupies port 5000  
+
+---
+
+## 📁 Project Structure
+```
 project/
-├── app.py # Main Flask application
+├── app.py                  # Main Flask application
 ├── templates/
-│ └── index.html # Web UI template
+│   └── index.html          # Web UI template
 ├── static/
-│ ├── style.css # Styling
-│ └── app.js # Frontend logic
-├── build_windows.spec # PyInstaller configuration
-├── BUILD_INSTRUCTIONS.md # Build guide
-├── README.md # This file
-└── ffmpeg/ # FFmpeg executable (for distribution)
-└── ffmpeg.exe
+│   ├── style.css           # Styling
+│   └── app.js              # Frontend logic
+├── build_windows.spec      # PyInstaller build config
+├── BUILD_INSTRUCTIONS.md   # Build guide
+├── README.md               # This file
+└── ffmpeg/
+    └── ffmpeg.exe          # FFmpeg binary (for distribution)
+```
 
-License
-This project is provided as-is for educational and commercial use.
+---
 
-Acknowledgments
-FFmpeg for the powerful streaming engine
-Flask and Socket.IO for the web framework
-Bootstrap for the UI components
+## 📜 License
+This project is provided **as-is**, for **educational and commercial use**.
+
+---
+
+## 🙌 Acknowledgments
+
+- [FFmpeg](https://ffmpeg.org) — The powerful streaming engine  
+- [Flask](https://flask.palletsprojects.com/) + [Socket.IO](https://socket.io) — Web framework and real-time updates  
+- [Bootstrap](https://getbootstrap.com) — Frontend UI framework  
+- [MediaMTX](https://github.com/bluenviron/mediamtx) — RTSP server backend  
+
+---
