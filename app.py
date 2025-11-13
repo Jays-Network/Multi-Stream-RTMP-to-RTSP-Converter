@@ -10,18 +10,28 @@ import socket
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
+# ---------------------------------------------------------------
+# Flask + Socket.IO Setup
+# ---------------------------------------------------------------
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SESSION_SECRET', 'dev-secret-key-change-in-production')
 socketio = SocketIO(app, cors_allowed_origins="*")
 
+# ---------------------------------------------------------------
+# Global Variables
+# ---------------------------------------------------------------
 streams = {}
 mediamtx_process = None
 
-RTSP_SERVER_PORT = 8554
-RTSP_SERVER_HOST = "localhost"
+# RTSP Server Configuration
+RTSP_SERVER_HOST = "localhost"  # localhost only
+RTSP_SERVER_PORT = 8554         # MediaMTX default RTSP port
 
-
+# ---------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------
 def get_ffmpeg_path():
+    """Detect or return bundled ffmpeg path."""
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
         ffmpeg_path = os.path.join(base_path, 'ffmpeg', 'ffmpeg.exe')
@@ -31,9 +41,7 @@ def get_ffmpeg_path():
     ffmpeg_candidates = ['ffmpeg.exe', 'ffmpeg']
     for candidate in ffmpeg_candidates:
         try:
-            result = subprocess.run([candidate, '-version'], 
-                                   capture_output=True, 
-                                   timeout=5)
+            result = subprocess.run([candidate, '-version'], capture_output=True, timeout=5)
             if result.returncode == 0:
                 return candidate
         except Exception:
@@ -43,6 +51,7 @@ def get_ffmpeg_path():
 
 
 def get_mediamtx_path():
+    """Locate MediaMTX executable."""
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
         mediamtx_path = os.path.join(base_path, 'mediamtx', 'mediamtx.exe')
@@ -58,10 +67,12 @@ def get_mediamtx_path():
 
 
 def generate_stream_id():
+    """Create a unique stream ID."""
     return str(uuid.uuid4())[:8]
 
 
 def is_port_open(host, port):
+    """Check if a port is already in use."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(1)
     try:
@@ -72,11 +83,15 @@ def is_port_open(host, port):
         return False
 
 
+# ---------------------------------------------------------------
+# MediaMTX Management
+# ---------------------------------------------------------------
 def start_rtsp_server():
+    """Start the MediaMTX RTSP server."""
     global mediamtx_process
-    
+
     if is_port_open(RTSP_SERVER_HOST, RTSP_SERVER_PORT):
-        print(f"RTSP server already running on {RTSP_SERVER_HOST}:{RTSP_SERVER_PORT}")
+        print(f"[INFO] RTSP server already running on {RTSP_SERVER_HOST}:{RTSP_SERVER_PORT}")
         return True
     
     mediamtx_path = get_mediamtx_path()
@@ -93,22 +108,23 @@ def start_rtsp_server():
         for _ in range(10):
             time.sleep(0.5)
             if is_port_open(RTSP_SERVER_HOST, RTSP_SERVER_PORT):
-                print(f"MediaMTX RTSP server started successfully on port {RTSP_SERVER_PORT}")
+                print(f"[INFO] MediaMTX RTSP server started successfully on port {RTSP_SERVER_PORT}")
                 return True
         
-        print("MediaMTX started but port not available")
+        print("[WARN] MediaMTX started but RTSP port not responding.")
         return False
         
     except FileNotFoundError:
-        print(f"MediaMTX not found at {mediamtx_path}. Please download MediaMTX from https://github.com/bluenviron/mediamtx/releases")
-        print("Place mediamtx.exe in a 'mediamtx' folder next to this application.")
+        print(f"[ERROR] MediaMTX not found at {mediamtx_path}")
+        print("Download from: https://github.com/bluenviron/mediamtx/releases")
         return False
     except Exception as e:
-        print(f"Failed to start MediaMTX: {str(e)}")
+        print(f"[ERROR] Failed to start MediaMTX: {str(e)}")
         return False
 
 
 def stop_rtsp_server():
+    """Stop the MediaMTX server."""
     global mediamtx_process
     if mediamtx_process:
         try:
@@ -119,65 +135,61 @@ def stop_rtsp_server():
             mediamtx_process.wait(timeout=5)
         except Exception:
             try:
-                if mediamtx_process:
-                    mediamtx_process.kill()
+                mediamtx_process.kill()
             except Exception:
                 pass
         mediamtx_process = None
+        print("[INFO] MediaMTX stopped.")
 
 
+# ---------------------------------------------------------------
+# Stream Process Management
+# ---------------------------------------------------------------
 def monitor_process(stream_id, process):
-    # Change: Read stderr output line by line as it runs for better logging/error detection
+    """Monitor FFmpeg subprocess and detect errors."""
     stderr_lines = iter(process.stderr.readline, b'')
     startup_failed = False
-    
+
     try:
-        # Give FFmpeg a few seconds to connect
-        startup_timeout = 5
         start_time = time.time()
-        
-        # This loop reads the FFmpeg stderr output as it's generated
+        startup_timeout = 5
+
         for line in stderr_lines:
             if stream_id not in streams:
                 break
-            
+
             log_message = line.decode('utf-8', errors='ignore').strip()
-            
-            # --- Key Logic: Error Detection ---
-            # Check for common fatal errors indicating connection/file issues
-            if "could not open" in log_message.lower() or "no such file or directory" in log_message.lower():
+            if not log_message:
+                continue
+
+            if "could not open" in log_message.lower() or "no such file" in log_message.lower():
                 startup_failed = True
-                streams[stream_id]['error'] = f"Fatal FFmpeg startup error: {log_message[:100]}"
+                streams[stream_id]['error'] = log_message
                 streams[stream_id]['status'] = 'stopped'
-                
-                socketio.emit('log', {'message': streams[stream_id]['error'], 'type': 'error'})
-                socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'stopped', 'error': streams[stream_id]['error']})
+                socketio.emit('log', {'message': f"[ERROR] {log_message}", 'type': 'error'})
+                socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'stopped', 'error': log_message})
                 break
-            # --- End Key Logic ---
 
             if time.time() - start_time > startup_timeout and streams[stream_id]['status'] == 'starting':
-                # If we passed the startup phase and process is still running, mark as active
                 streams[stream_id]['status'] = 'active'
                 socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'active', 'error': ''})
-                socketio.emit('log', {'message': f"Stream {stream_id} is now active.", 'type': 'info'})
+                socketio.emit('log', {'message': f"[INFO] Stream {stream_id} is now active.", 'type': 'info'})
 
-            # Check if process terminated during line reading
             if process.poll() is not None:
                 break
-        
-        # After loop (either broke or process terminated/stderr closed)
+
         if process.poll() is not None and streams[stream_id]['status'] != 'stopped' and not startup_failed:
-            # Process terminated unexpectedly *after* successful startup
             streams[stream_id]['status'] = 'stopped'
-            streams[stream_id]['error'] = f"Process terminated unexpectedly. Exit code: {process.returncode}"
-            
-            socketio.emit('log', {'message': f"Stream {stream_id} stopped unexpectedly. Exit code: {process.returncode}", 'type': 'error'})
+            streams[stream_id]['error'] = f"Process exited (code {process.returncode})"
+            socketio.emit('log', {'message': f"[WARN] Stream {stream_id} stopped unexpectedly.", 'type': 'error'})
             socketio.emit('stream_update', {'stream_id': stream_id, 'status': 'stopped', 'error': streams[stream_id]['error']})
-            
     except Exception as e:
-        print(f"Monitor thread error for {stream_id}: {str(e)}")
+        print(f"[ERROR] Monitor thread for {stream_id}: {e}")
 
 
+# ---------------------------------------------------------------
+# Flask API Routes
+# ---------------------------------------------------------------
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -190,12 +202,10 @@ def get_status():
     if not rtsp_server_running:
         mediamtx_path = get_mediamtx_path()
         if os.path.exists(mediamtx_path):
-            print(f"RTSP server not running, attempting to start MediaMTX...")
+            print("[INFO] RTSP server not running, attempting to start MediaMTX...")
             if start_rtsp_server():
                 rtsp_server_running = True
-                print("MediaMTX started successfully via status check")
-            else:
-                print("Failed to start MediaMTX via status check")
+                print("[INFO] MediaMTX started via status check.")
     
     return jsonify({
         'rtsp_server_running': rtsp_server_running,
@@ -206,66 +216,41 @@ def get_status():
 
 @app.route('/api/streams', methods=['GET'])
 def get_streams():
-    stream_list = []
-    for stream_id, stream_data in streams.items():
-        stream_list.append({
-            'id': stream_id,
-            'rtmp_url': stream_data['rtmp_url'],
-            'rtsp_url': stream_data['rtsp_url'],
-            'status': stream_data['status'],
-            'error': stream_data.get('error', '')
-        })
-    return jsonify(stream_list)
+    return jsonify([
+        {
+            'id': sid,
+            'rtmp_url': s['rtmp_url'],
+            'rtsp_url': s['rtsp_url'],
+            'status': s['status'],
+            'error': s.get('error', '')
+        } for sid, s in streams.items()
+    ])
 
 
 @app.route('/api/start', methods=['POST'])
 def start_streams():
+    """Start one or more FFmpeg RTMP->RTSP relay processes."""
     if not is_port_open(RTSP_SERVER_HOST, RTSP_SERVER_PORT):
-        mediamtx_path = get_mediamtx_path()
-        if os.path.exists(mediamtx_path):
-            print("RTSP server not running, attempting to start MediaMTX before processing streams...")
-            if not start_rtsp_server():
-                error_msg = 'Failed to start MediaMTX RTSP server. Please check that port 8554 is available.'
-                socketio.emit('log', {
-                    'message': error_msg,
-                    'type': 'error'
-                })
-                return jsonify({'error': error_msg}), 503
-            socketio.emit('log', {
-                'message': 'MediaMTX RTSP server started successfully',
-                'type': 'info'
-            })
-        else:
-            error_msg = f'MediaMTX not found at {mediamtx_path}. Please download MediaMTX from https://github.com/bluenviron/mediamtx/releases and place mediamtx.exe in a mediamtx folder.'
-            socketio.emit('log', {
-                'message': error_msg,
-                'type': 'error'
-            })
-            return jsonify({'error': error_msg}), 503
-    
-    data = request.json if request.json else {}
-    rtmp_urls = data.get('rtmp_urls', []) if data else []
-    
+        if not start_rtsp_server():
+            return jsonify({'error': 'Failed to start MediaMTX RTSP server'}), 503
+
+    data = request.json or {}
+    rtmp_urls = data.get('rtmp_urls', [])
     if not rtmp_urls:
         return jsonify({'error': 'No RTMP URLs provided'}), 400
-    
+
     started_streams = []
-    
+    ffmpeg_path = get_ffmpeg_path()
+
     for rtmp_url in rtmp_urls:
         rtmp_url = rtmp_url.strip()
-        if not rtmp_url:
-            continue
-        
         if not rtmp_url.startswith('rtmp://'):
-            socketio.emit('log', {
-                'message': f'Invalid RTMP URL: {rtmp_url}',
-                'type': 'error'
-            })
+            socketio.emit('log', {'message': f"[ERROR] Invalid RTMP URL: {rtmp_url}", 'type': 'error'})
             continue
-        
+
         stream_id = generate_stream_id()
         rtsp_url = f"rtsp://{RTSP_SERVER_HOST}:{RTSP_SERVER_PORT}/{stream_id}"
-        
+
         streams[stream_id] = {
             'rtmp_url': rtmp_url,
             'rtsp_url': rtsp_url,
@@ -273,27 +258,19 @@ def start_streams():
             'process': None,
             'error': ''
         }
-        
-        ffmpeg_path = get_ffmpeg_path()
-        
+
         ffmpeg_cmd = [
             ffmpeg_path,
-            # Added input options for live streaming stability
-            '-analyzeduration', '1000000', # Analyze 1 second of data
-            '-probesize', '1000000',       # Probe 1MB of data
+            '-analyzeduration', '1000000',
+            '-probesize', '1000000',
             '-i', rtmp_url,
-            # Force a keyframe/GOP every 2 seconds for better stream stability
-            '-g', '60', # Assuming 30fps stream
-            '-force_key_frames', 'expr:gte(t,n_forced*2)',
             '-c:v', 'copy',
             '-c:a', 'copy',
             '-f', 'rtsp',
             '-rtsp_transport', 'tcp',
-            # MediaMTX is known to work best with its own custom path
-            # Note: You already use rtsp://localhost:8554/{stream_id}, which is correct.
             rtsp_url
         ]
-        
+
         try:
             process = subprocess.Popen(
                 ffmpeg_cmd,
@@ -302,176 +279,103 @@ def start_streams():
                 stdin=subprocess.PIPE,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
-            
+
             streams[stream_id]['process'] = process
-            
-            monitor_thread = threading.Thread(
-                target=monitor_process,
-                args=(stream_id, process),
-                daemon=True
-            )
-            monitor_thread.start()
-            
-            started_streams.append({
-                'id': stream_id,
-                'rtmp_url': rtmp_url,
-                'rtsp_url': rtsp_url,
-                'status': 'starting'
-            })
-            
-            socketio.emit('log', {
-                'message': f'Attempting to start stream {stream_id}: {rtmp_url} -> {rtsp_url}',
-                'type': 'info'
-            })
-            
-            socketio.emit('stream_update', {
-                'stream_id': stream_id,
-                'rtmp_url': rtmp_url,
-                'rtsp_url': rtsp_url,
-                'status': 'starting',
-                'error': ''
-            })
-            
+            threading.Thread(target=monitor_process, args=(stream_id, process), daemon=True).start()
+
+            started_streams.append({'id': stream_id, 'rtmp_url': rtmp_url, 'rtsp_url': rtsp_url, 'status': 'starting'})
+            socketio.emit('log', {'message': f"[INFO] Starting stream {stream_id}: {rtmp_url} -> {rtsp_url}", 'type': 'info'})
         except Exception as e:
             streams[stream_id]['status'] = 'stopped'
             streams[stream_id]['error'] = str(e)
-            
-            socketio.emit('log', {
-                'message': f'Failed to start stream {stream_id}: {str(e)}',
-                'type': 'error'
-            })
-            
-            socketio.emit('stream_update', {
-                'stream_id': stream_id,
-                'status': 'stopped',
-                'error': str(e)
-            })
-    
+            socketio.emit('log', {'message': f"[ERROR] Failed to start stream {stream_id}: {e}", 'type': 'error'})
+
     return jsonify({'streams': started_streams})
 
 
 @app.route('/api/stop/<stream_id>', methods=['POST'])
 def stop_stream(stream_id):
+    """Stop a specific FFmpeg stream process."""
     if stream_id not in streams:
         return jsonify({'error': 'Stream not found'}), 404
-    
-    stream_data = streams[stream_id]
-    process = stream_data.get('process')
-    
+
+    stream = streams[stream_id]
+    process = stream.get('process')
+
     if process:
-        parent = None
         try:
             parent = psutil.Process(process.pid)
             for child in parent.children(recursive=True):
                 child.terminate()
             parent.terminate()
-            
-            process.wait(timeout=5)
-        except psutil.NoSuchProcess:
-            pass
-        except psutil.TimeoutExpired:
+            process.wait(timeout=3)
+        except Exception:
             try:
-                if parent:
-                    parent.kill()
-                    for child in parent.children(recursive=True):
-                        child.kill()
+                process.kill()
             except Exception:
                 pass
-        except Exception as e:
-            print(f"Error stopping process: {str(e)}")
-    
+
     streams[stream_id]['status'] = 'stopped'
-    streams[stream_id]['process'] = None
-    
-    socketio.emit('log', {
-        'message': f'Stopped stream {stream_id}',
-        'type': 'info'
-    })
-    
-    socketio.emit('stream_update', {
-        'stream_id': stream_id,
-        'status': 'stopped'
-    })
-    
-    return jsonify({'message': 'Stream stopped'})
+    socketio.emit('log', {'message': f"[INFO] Stopped stream {stream_id}", 'type': 'info'})
+    return jsonify({'message': f'Stream {stream_id} stopped'})
 
 
 @app.route('/api/stop_all', methods=['POST'])
 def stop_all_streams():
-    for stream_id in list(streams.keys()):
-        stream_data = streams[stream_id]
-        process = stream_data.get('process')
-        
+    """Stop all active streams."""
+    for sid, stream in list(streams.items()):
+        process = stream.get('process')
         if process:
-            parent = None
             try:
                 parent = psutil.Process(process.pid)
                 for child in parent.children(recursive=True):
                     child.terminate()
                 parent.terminate()
-                process.wait(timeout=2)
             except Exception:
-                try:
-                    if parent:
-                        parent.kill()
-                except Exception:
-                    pass
-        
-        streams[stream_id]['status'] = 'stopped'
-        streams[stream_id]['process'] = None
-    
-    socketio.emit('log', {
-        'message': 'All streams stopped',
-        'type': 'info'
-    })
-    
+                pass
+        streams[sid]['status'] = 'stopped'
+
+    socketio.emit('log', {'message': '[INFO] All streams stopped', 'type': 'info'})
     return jsonify({'message': 'All streams stopped'})
 
 
+# ---------------------------------------------------------------
+# Misc Utilities
+# ---------------------------------------------------------------
 @socketio.on('connect')
 def handle_connect():
-    emit('log', {'message': 'Connected to server', 'type': 'info'})
+    emit('log', {'message': '[INFO] Connected to server', 'type': 'info'})
 
 
 def setup_windows_startup():
-    if sys.platform != 'win32':
+    """Auto-start app on Windows boot if frozen."""
+    if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
         return False
-    
-    if not getattr(sys, 'frozen', False):
-        return False
-    
     try:
         import winreg
-        
         exe_path = sys.executable
         app_name = "RTMPtoRTSPConverter"
-        
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            0,
-            winreg.KEY_SET_VALUE
-        )
-        
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
         winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
         winreg.CloseKey(key)
-        
         return True
     except Exception as e:
-        print(f"Failed to setup Windows startup: {str(e)}")
+        print(f"[WARN] Startup registration failed: {e}")
         return False
 
 
 def open_browser():
+    """Auto-open web UI."""
     time.sleep(1.5)
     webbrowser.open('http://localhost:5000')
 
 
 def cleanup():
-    print("Shutting down...")
-    for stream_id in list(streams.keys()):
-        stream_data = streams[stream_id]
-        process = stream_data.get('process')
+    """Terminate all subprocesses on exit."""
+    print("[INFO] Cleaning up...")
+    for stream in list(streams.values()):
+        process = stream.get('process')
         if process:
             try:
                 process.terminate()
@@ -481,31 +385,32 @@ def cleanup():
                     process.kill()
                 except Exception:
                     pass
-    
     stop_rtsp_server()
-    print("Cleanup complete")
+    print("[INFO] Cleanup complete.")
 
 
+# ---------------------------------------------------------------
+# Main Entry Point
+# ---------------------------------------------------------------
 if __name__ == '__main__':
     import atexit
     atexit.register(cleanup)
-    
-    print("Starting RTMP to RTSP Converter...")
-    
+
+    print("[BOOT] Starting RTMP → RTSP Converter")
+
     if start_rtsp_server():
-        print("RTSP server is ready")
+        print(f"[READY] RTSP server listening at rtsp://{RTSP_SERVER_HOST}:{RTSP_SERVER_PORT}/<stream_id>")
     else:
-        print("WARNING: RTSP server failed to start. Streams will not work!")
-        print("Download MediaMTX from: https://github.com/bluenviron/mediamtx/releases")
-        print("Extract mediamtx.exe to a 'mediamtx' folder next to this application")
-    
+        print("[WARN] RTSP server failed to start. Streams will not work!")
+
     if getattr(sys, 'frozen', False):
         setup_windows_startup()
         threading.Thread(target=open_browser, daemon=True).start()
-    
+
     try:
-        socketio.run(app, host='0.0.0.0', port=5000, debug=False, use_reloader=False, log_output=True, allow_unsafe_werkzeug=True)
+        socketio.run(app, host='0.0.0.0', port=5000, debug=False, use_reloader=False,
+                     log_output=True, allow_unsafe_werkzeug=True)
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
+        print("\n[EXIT] Interrupted by user.")
     finally:
         cleanup()
